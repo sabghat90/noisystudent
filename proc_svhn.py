@@ -111,7 +111,7 @@ def save_tfrecord(data):
     else:
       num_shards = 64
     shard_spacing = np.linspace(
-        0, data[subset]['images'].shape[0], num_shards + 1).astype(np.int)
+        0, data[subset]['images'].shape[0], num_shards + 1).astype(np.int64)
     cnt = 0
     if subset == 'extra':
       output_dir = os.path.join(FLAGS.output_dir, 'unlabeled')
