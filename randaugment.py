@@ -23,8 +23,6 @@ from __future__ import print_function
 import inspect
 import math
 import tensorflow as tf
-from tensorflow.contrib import image as contrib_image
-from tensorflow.contrib import training as contrib_training
 from absl import flags
 
 # This signifies the max integer that the controller RNN could predict for the
@@ -201,19 +199,53 @@ def rotate(image, degrees, replace):
   # In practice, we should randomize the rotation degrees by flipping
   # it negatively half the time, but that's done on 'degrees' outside
   # of the function.
-  image = contrib_image.rotate(wrap(image), radians)
+  # Use native TF operation for rotation
+  image_wrapped = wrap(image)
+  # Get image shape
+  image_height = tf.cast(tf.shape(image_wrapped)[0], tf.float32)
+  image_width = tf.cast(tf.shape(image_wrapped)[1], tf.float32)
+  # Create rotation matrix
+  cos_val = tf.cos(radians)
+  sin_val = tf.sin(radians)
+  # Center of rotation
+  x_offset = ((image_width - 1) - (cos_val * (image_width - 1) - sin_val * (image_height - 1))) / 2.0
+  y_offset = ((image_height - 1) - (sin_val * (image_width - 1) + cos_val * (image_height - 1))) / 2.0
+  # Transformation matrix [a0, a1, a2, b0, b1, b2, c0, c1]
+  transform = [cos_val, -sin_val, x_offset, sin_val, cos_val, y_offset, 0., 0.]
+  image = tf.raw_ops.ImageProjectiveTransformV3(
+      images=image_wrapped,
+      transforms=tf.expand_dims(transform, 0),
+      output_shape=tf.shape(image_wrapped)[:2],
+      fill_value=0.0,
+      interpolation='BILINEAR')
   return unwrap(image, replace)
 
 
 def translate_x(image, pixels, replace):
   '''Equivalent of PIL Translate in X dimension.'''
-  image = contrib_image.translate(wrap(image), [-pixels, 0])
+  # Use native TF translate operation
+  image_wrapped = wrap(image)
+  transform = [1., 0., -pixels, 0., 1., 0., 0., 0.]
+  image = tf.raw_ops.ImageProjectiveTransformV3(
+      images=image_wrapped,
+      transforms=tf.expand_dims(transform, 0),
+      output_shape=tf.shape(image_wrapped)[:2],
+      fill_value=0.0,
+      interpolation='BILINEAR')
   return unwrap(image, replace)
 
 
 def translate_y(image, pixels, replace):
   '''Equivalent of PIL Translate in Y dimension.'''
-  image = contrib_image.translate(wrap(image), [0, -pixels])
+  # Use native TF translate operation
+  image_wrapped = wrap(image)
+  transform = [1., 0., 0., 0., 1., -pixels, 0., 0.]
+  image = tf.raw_ops.ImageProjectiveTransformV3(
+      images=image_wrapped,
+      transforms=tf.expand_dims(transform, 0),
+      output_shape=tf.shape(image_wrapped)[:2],
+      fill_value=0.0,
+      interpolation='BILINEAR')
   return unwrap(image, replace)
 
 
@@ -223,8 +255,14 @@ def shear_x(image, level, replace):
   # with a matrix form of:
   # [1  level
   #  0  1].
-  image = contrib_image.transform(
-      wrap(image), [1., level, 0., 0., 1., 0., 0., 0.])
+  image_wrapped = wrap(image)
+  transform = [1., level, 0., 0., 1., 0., 0., 0.]
+  image = tf.raw_ops.ImageProjectiveTransformV3(
+      images=image_wrapped,
+      transforms=tf.expand_dims(transform, 0),
+      output_shape=tf.shape(image_wrapped)[:2],
+      fill_value=0.0,
+      interpolation='BILINEAR')
   return unwrap(image, replace)
 
 
@@ -234,8 +272,14 @@ def shear_y(image, level, replace):
   # with a matrix form of:
   # [1  0
   #  level  1].
-  image = contrib_image.transform(
-      wrap(image), [1., 0., 0., level, 1., 0., 0., 0.])
+  image_wrapped = wrap(image)
+  transform = [1., 0., 0., level, 1., 0., 0., 0.]
+  image = tf.raw_ops.ImageProjectiveTransformV3(
+      images=image_wrapped,
+      transforms=tf.expand_dims(transform, 0),
+      output_shape=tf.shape(image_wrapped)[:2],
+      fill_value=0.0,
+      interpolation='BILINEAR')
   return unwrap(image, replace)
 
 
@@ -525,7 +569,12 @@ def distort_image_with_randaugment(image, num_layers, magnitude,
   '''
   replace_value = [128] * 3
   tf.compat.v1.logging.info('Using RandAug.')
-  augmentation_hparams = contrib_training.HParams(
+  # Create a simple namespace object to replace contrib_training.HParams
+  class HParams:
+    def __init__(self, **kwargs):
+      for key, value in kwargs.items():
+        setattr(self, key, value)
+  augmentation_hparams = HParams(
       cutout_const=cutout_const, translate_const=translate_const)
   available_ops = [
       'AutoContrast', 'Equalize', 'Invert', 'Rotate', 'Posterize',
