@@ -203,9 +203,10 @@ def run_prediction(estimator):
       sample_dir = os.path.join(FLAGS.output_dir, 'samples')
       uid_list = utils.get_uid_list()
       for uid in uid_list:
-        tf.gfile.MakeDirs(os.path.join(sample_dir, uid))
+        tf.io.gfile.makedirs(os.path.join(sample_dir, uid))
 
-      image_bytes_placeholder = tf.placeholder(dtype=tf.string)
+      # Note: This uses TF 1.x session-based approach
+      image_bytes_placeholder = tf.compat.v1.placeholder(dtype=tf.string)
       decoded_image = utils.decode_raw_image(image_bytes_placeholder)
 
       raw_dst = get_input_fn({'batch_size': 1}, raw_data=True)
@@ -215,10 +216,10 @@ def run_prediction(estimator):
       filename = utils.get_reassign_filename(
           FLAGS.label_data_dir, FLAGS.file_prefix,
           shard_id, FLAGS.num_shards, FLAGS.worker_id)
-      record_writer = tf.python_io.TFRecordWriter(os.path.join(
+      record_writer = tf.io.TFRecordWriter(os.path.join(
           FLAGS.output_dir, os.path.basename(filename)))
       sample_prob = 30000. / (worker_image_num * FLAGS.num_shards)
-      with tf.Session() as sess:
+      with tf.compat.v1.Session() as sess:
         sess.run(raw_iter.initializer)
         for i in range(worker_image_num):
           features = sess.run(raw_elem)
@@ -248,7 +249,7 @@ def run_prediction(estimator):
     else:
       filename = 'train-info-%.5d-of-%.5d-%.5d' % (
           shard_id, FLAGS.num_shards, FLAGS.worker_id)
-      writer = tf.python_io.TFRecordWriter(
+      writer = tf.io.TFRecordWriter(
           os.path.join(FLAGS.output_dir, filename))
       for result in predict_result_list:
         features = {}

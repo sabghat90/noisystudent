@@ -284,10 +284,12 @@ def filter_image_by_idx(
   sample_dir = os.path.join(FLAGS.output_dir, 'samples')
   data_dir = os.path.join(FLAGS.output_dir, 'data')
   for uid in uid_list:
-    tf.gfile.MakeDirs(os.path.join(sample_dir, uid))
-  tf.gfile.MakeDirs(data_dir)
+    tf.io.gfile.makedirs(os.path.join(sample_dir, uid))
+  tf.io.gfile.makedirs(data_dir)
 
-  image_bytes_placeholder = tf.placeholder(dtype=tf.string)
+  # Note: This code uses TF 1.x session-based approach which is deprecated
+  # For TF 2.x, this would need to be refactored to use eager execution
+  image_bytes_placeholder = tf.compat.v1.placeholder(dtype=tf.string)
   decoded_image = utils.decode_raw_image(image_bytes_placeholder)
 
   total_cnt = 0
@@ -295,18 +297,18 @@ def filter_image_by_idx(
   image_list = []
   if len(keep_idx) == 0:
     return
-  record_writer = tf.python_io.TFRecordWriter(
+  record_writer = tf.io.TFRecordWriter(
       os.path.join(data_dir, 'train-%d-%.5d-of-%.5d' % (
           FLAGS.task, FLAGS.shard_id, FLAGS.num_shards)))
   for worker_id in get_worker_id_list():
-    tf.logging.info('worker_id: {:d}, elapsed time: {:.2f} h'.format(
+    tf.compat.v1.logging.info('worker_id: {:d}, elapsed time: {:.2f} h'.format(
         worker_id, (time.time() - start_time) / 3600.))
     dst = input_dataset(worker_id)
     iter = dst.make_initializable_iterator()
     elem = iter.get_next()
     cnt = 0
     hit_samples = {}
-    with tf.Session() as sess:
+    with tf.compat.v1.Session() as sess:
       sess.run(iter.initializer)
       for i in range(num_image_for_worker[worker_id]):
         features = sess.run(elem)
