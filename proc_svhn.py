@@ -45,10 +45,10 @@ flags.DEFINE_bool(
 
 
 def save_merged_data(images, labels, split, merge_folder):
-  with tf.gfile.Open(
+  with tf.io.gfile.GFile(
       os.path.join(merge_folder, '{}_images.npy'.format(split)), 'wb') as ouf:
     np.save(ouf, images)
-  with tf.gfile.Open(
+  with tf.io.gfile.GFile(
       os.path.join(merge_folder, '{}_labels.npy'.format(split)), 'wb') as ouf:
     np.save(ouf, labels)
 
@@ -62,7 +62,7 @@ def download_and_extract():
     splits += ['extra']
   for split in ['train', 'test']:
     for field in splits:
-      if not tf.gfile.Exists(os.path.join(merge_folder, '{}_{}.npy'.format(
+      if not tf.io.gfile.exists(os.path.join(merge_folder, '{}_{}.npy'.format(
           split, field))):
         all_exist = False
   if all_exist:
