@@ -257,21 +257,22 @@ class ImageCoder(object):
   '''Helper class that provides TensorFlow image coding utilities.'''
 
   def __init__(self):
-    # Create a single Session to run all image coding calls.
-    self._sess = tf.compat.v1.Session()
-
-    # Initializes function that decodes RGB JPEG data.
-    self._decode_jpeg_data = tf.placeholder(dtype=tf.string)
-    self._decode_jpeg = tf.image.decode_jpeg(self._decode_jpeg_data, channels=3)
-
-    self._encode_jpeg_data = tf.placeholder(dtype=tf.uint8)
-    self._encode_jpeg = tf.image.encode_jpeg(self._encode_jpeg_data,
-                                             format='rgb', quality=100)
+    # TensorFlow 2.x uses eager execution, no need for Session
+    pass
 
   def encode_jpeg(self, image):
-    image_data = self._sess.run(self._encode_jpeg,
-                                feed_dict={self._encode_jpeg_data: image})
-    return image_data
+    # Encode using TensorFlow 2.x eager execution
+    if not isinstance(image, tf.Tensor):
+      image = tf.constant(image, dtype=tf.uint8)
+    image_data = tf.image.encode_jpeg(image, format='rgb', quality=100)
+    return image_data.numpy()
+
+  def decode_jpeg(self, image_data):
+    # Decode using TensorFlow 2.x eager execution
+    if not isinstance(image_data, tf.Tensor):
+      image_data = tf.constant(image_data, dtype=tf.string)
+    image = tf.image.decode_jpeg(image_data, channels=3)
+    return image.numpy()
 
 
 
