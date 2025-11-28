@@ -201,9 +201,11 @@ def rotate(image, degrees, replace):
   # of the function.
   # Use native TF operation for rotation
   image_wrapped = wrap(image)
+  # Add batch dimension for ImageProjectiveTransformV3
+  image_wrapped = tf.expand_dims(image_wrapped, 0)
   # Get image shape
-  image_height = tf.cast(tf.shape(image_wrapped)[0], tf.float32)
-  image_width = tf.cast(tf.shape(image_wrapped)[1], tf.float32)
+  image_height = tf.cast(tf.shape(image_wrapped)[1], tf.float32)
+  image_width = tf.cast(tf.shape(image_wrapped)[2], tf.float32)
   # Create rotation matrix
   cos_val = tf.cos(radians)
   sin_val = tf.sin(radians)
@@ -215,9 +217,11 @@ def rotate(image, degrees, replace):
   image = tf.raw_ops.ImageProjectiveTransformV3(
       images=image_wrapped,
       transforms=tf.expand_dims(transform, 0),
-      output_shape=tf.shape(image_wrapped)[:2],
+      output_shape=tf.shape(image_wrapped)[1:3],
       fill_value=0.0,
       interpolation='BILINEAR')
+  # Remove batch dimension
+  image = tf.squeeze(image, 0)
   return unwrap(image, replace)
 
 
@@ -225,13 +229,17 @@ def translate_x(image, pixels, replace):
   '''Equivalent of PIL Translate in X dimension.'''
   # Use native TF translate operation
   image_wrapped = wrap(image)
+  # Add batch dimension
+  image_wrapped = tf.expand_dims(image_wrapped, 0)
   transform = [1., 0., -pixels, 0., 1., 0., 0., 0.]
   image = tf.raw_ops.ImageProjectiveTransformV3(
       images=image_wrapped,
       transforms=tf.expand_dims(transform, 0),
-      output_shape=tf.shape(image_wrapped)[:2],
+      output_shape=tf.shape(image_wrapped)[1:3],
       fill_value=0.0,
       interpolation='BILINEAR')
+  # Remove batch dimension
+  image = tf.squeeze(image, 0)
   return unwrap(image, replace)
 
 
@@ -239,13 +247,17 @@ def translate_y(image, pixels, replace):
   '''Equivalent of PIL Translate in Y dimension.'''
   # Use native TF translate operation
   image_wrapped = wrap(image)
+  # Add batch dimension
+  image_wrapped = tf.expand_dims(image_wrapped, 0)
   transform = [1., 0., 0., 0., 1., -pixels, 0., 0.]
   image = tf.raw_ops.ImageProjectiveTransformV3(
       images=image_wrapped,
       transforms=tf.expand_dims(transform, 0),
-      output_shape=tf.shape(image_wrapped)[:2],
+      output_shape=tf.shape(image_wrapped)[1:3],
       fill_value=0.0,
       interpolation='BILINEAR')
+  # Remove batch dimension
+  image = tf.squeeze(image, 0)
   return unwrap(image, replace)
 
 
@@ -256,13 +268,17 @@ def shear_x(image, level, replace):
   # [1  level
   #  0  1].
   image_wrapped = wrap(image)
+  # Add batch dimension
+  image_wrapped = tf.expand_dims(image_wrapped, 0)
   transform = [1., level, 0., 0., 1., 0., 0., 0.]
   image = tf.raw_ops.ImageProjectiveTransformV3(
       images=image_wrapped,
       transforms=tf.expand_dims(transform, 0),
-      output_shape=tf.shape(image_wrapped)[:2],
+      output_shape=tf.shape(image_wrapped)[1:3],
       fill_value=0.0,
       interpolation='BILINEAR')
+  # Remove batch dimension
+  image = tf.squeeze(image, 0)
   return unwrap(image, replace)
 
 
@@ -273,13 +289,17 @@ def shear_y(image, level, replace):
   # [1  0
   #  level  1].
   image_wrapped = wrap(image)
+  # Add batch dimension
+  image_wrapped = tf.expand_dims(image_wrapped, 0)
   transform = [1., 0., 0., level, 1., 0., 0., 0.]
   image = tf.raw_ops.ImageProjectiveTransformV3(
       images=image_wrapped,
       transforms=tf.expand_dims(transform, 0),
-      output_shape=tf.shape(image_wrapped)[:2],
+      output_shape=tf.shape(image_wrapped)[1:3],
       fill_value=0.0,
       interpolation='BILINEAR')
+  # Remove batch dimension
+  image = tf.squeeze(image, 0)
   return unwrap(image, replace)
 
 
@@ -336,7 +356,7 @@ def sharpness(image, factor):
   kernel = tf.tile(kernel, [1, 1, 3, 1])
   strides = [1, 1, 1, 1]
   degenerate = tf.nn.depthwise_conv2d(
-      image, kernel, strides, padding='VALID', rate=[1, 1])
+      image, kernel, strides, padding='VALID', dilations=[1, 1])
   degenerate = tf.clip_by_value(degenerate, 0.0, 255.0)
   degenerate = tf.squeeze(tf.cast(degenerate, tf.uint8), [0])
 
@@ -433,9 +453,11 @@ def unwrap(image, replace):
   replace = tf.concat([replace, tf.ones([1], image.dtype)], 0)
 
   # Where they are zero, fill them in with 'replace'.
+  # Expand alpha_channel to match flattened_image shape for broadcasting
+  condition = tf.expand_dims(tf.equal(alpha_channel, 0), 1)
   flattened_image = tf.where(
-      tf.equal(alpha_channel, 0),
-      tf.ones_like(flattened_image, dtype=image.dtype) * replace,
+      condition,
+      tf.cast(replace, image.dtype),
       flattened_image)
 
   image = tf.reshape(flattened_image, image_shape)
@@ -465,7 +487,7 @@ NAME_TO_FUNC = {
 
 def _randomly_negate_tensor(tensor):
   '''With 50% prob turn the tensor negative.'''
-  should_flip = tf.cast(tf.floor(tf.random_uniform([]) + 0.5), tf.bool)
+  should_flip = tf.cast(tf.floor(tf.random.uniform([]) + 0.5), tf.bool)
   final_tensor = tf.cond(should_flip, lambda: tensor, lambda: -tensor)
   return final_tensor
 
@@ -536,14 +558,14 @@ def _parse_policy_info(name, prob, level, replace_value, augmentation_hparams):
   # Check to see if prob is passed into function. This is used for operations
   # where we alter bboxes independently.
   # pytype:disable=wrong-arg-types
-  if 'prob' in inspect.getargspec(func)[0]:
+  if 'prob' in inspect.getfullargspec(func)[0]:
     args = tuple([prob] + list(args))
   # pytype:enable=wrong-arg-types
 
   # Add in replace arg if it is required for the function that is being called.
-  if 'replace' in inspect.getargspec(func)[0]:
+  if 'replace' in inspect.getfullargspec(func)[0]:
     # Make sure replace is the final argument
-    assert 'replace' == inspect.getargspec(func)[0][-1]
+    assert 'replace' == inspect.getfullargspec(func)[0][-1]
     args = tuple(list(args) + [replace_value])
 
   return (func, prob, args)
@@ -590,7 +612,7 @@ def distort_image_with_randaugment(image, num_layers, magnitude,
     random_magnitude = float(magnitude)
     with tf.name_scope('randaug_layer_{}'.format(layer_num)):
       for (i, op_name) in enumerate(available_ops):
-        prob = tf.random_uniform([], minval=0.2, maxval=0.8, dtype=tf.float32)
+        prob = tf.random.uniform([], minval=0.2, maxval=0.8, dtype=tf.float32)
         func, _, args = _parse_policy_info(op_name, prob, random_magnitude,
                                            replace_value, augmentation_hparams)
         image = tf.cond(

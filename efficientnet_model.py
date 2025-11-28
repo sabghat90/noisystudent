@@ -91,7 +91,7 @@ def conv_kernel_initializer(shape, dtype=None, partition_info=None):
   del partition_info
   kernel_height, kernel_width, _, out_filters = shape
   fan_out = int(kernel_height * kernel_width * out_filters)
-  return tf.random_normal(
+  return tf.random.normal(
       shape, mean=0.0, stddev=np.sqrt(2.0 / fan_out), dtype=dtype)
 
 
@@ -188,7 +188,7 @@ class MBConvBlock(object):
     filters = self._block_args.input_filters * self._block_args.expand_ratio
     if self._block_args.expand_ratio != 1:
       # Expansion phase:
-      self._expand_conv = tf.layers.Conv2D(
+      self._expand_conv = tf.keras.layers.Conv2D(
           filters,
           kernel_size=[1, 1],
           strides=[1, 1],
@@ -227,7 +227,7 @@ class MBConvBlock(object):
       num_reduced_filters = max(
           1, int(self._block_args.input_filters * self._block_args.se_ratio))
       # Squeeze and Excitation layer.
-      self._se_reduce = tf.layers.Conv2D(
+      self._se_reduce = tf.keras.layers.Conv2D(
           num_reduced_filters,
           kernel_size=[1, 1],
           strides=[1, 1],
@@ -236,7 +236,7 @@ class MBConvBlock(object):
           data_format=self._data_format,
           use_bias=True,
           trainable=self.trainable)
-      self._se_expand = tf.layers.Conv2D(
+      self._se_expand = tf.keras.layers.Conv2D(
           filters,
           kernel_size=[1, 1],
           strides=[1, 1],
@@ -248,7 +248,7 @@ class MBConvBlock(object):
 
     # Output phase:
     filters = self._block_args.output_filters
-    self._project_conv = tf.layers.Conv2D(
+    self._project_conv = tf.keras.layers.Conv2D(
         filters,
         kernel_size=[1, 1],
         strides=[1, 1],
@@ -305,7 +305,7 @@ class MBConvBlock(object):
     tf.compat.v1.logging.info('DWConv: %s shape: %s' % (x.name, x.shape))
 
     if self._has_se:
-      with tf.variable_scope('se'):
+      with tf.compat.v1.variable_scope('se'):
         x = self._call_se(x)
 
     self.endpoints = {'expansion_output': x}
@@ -399,7 +399,7 @@ class Model(tf.keras.Model):
       channel_axis = -1
 
     # Stem part.
-    self._conv_stem = tf.layers.Conv2D(
+    self._conv_stem = tf.keras.layers.Conv2D(
         filters=round_filters(32, self._global_params),
         kernel_size=[3, 3],
         strides=[2, 2],
@@ -418,7 +418,7 @@ class Model(tf.keras.Model):
         is_teacher=self.is_teacher)
 
     # Head part.
-    self._conv_head = tf.layers.Conv2D(
+    self._conv_head = tf.keras.layers.Conv2D(
         filters=round_filters(1280, self._global_params),
         kernel_size=[1, 1],
         strides=[1, 1],
@@ -434,7 +434,7 @@ class Model(tf.keras.Model):
 
     self._avg_pooling = tf.keras.layers.GlobalAveragePooling2D(
         data_format=self._global_params.data_format)
-    self._fc = tf.layers.Dense(
+    self._fc = tf.keras.layers.Dense(
         self._global_params.num_classes,
         kernel_initializer=dense_kernel_initializer)
 
@@ -457,7 +457,7 @@ class Model(tf.keras.Model):
     outputs = None
     self.endpoints = {}
     # Calls Stem layers
-    with tf.variable_scope('stem'):
+    with tf.compat.v1.variable_scope('stem'):
       outputs = self._relu_fn(
           self._bn0(self._conv_stem(inputs),
                     training=training and FLAGS.fix_layer_num == -1))
@@ -473,7 +473,7 @@ class Model(tf.keras.Model):
         is_reduction = True
         reduction_idx += 1
 
-      with tf.variable_scope('blocks_%s' % idx):
+      with tf.compat.v1.variable_scope('blocks_%s' % idx):
         drop_rate = self._global_params.stochastic_depth_rate
         if drop_rate:
           drop_rate *= float(idx) / len(self._blocks)
@@ -493,7 +493,7 @@ class Model(tf.keras.Model):
 
     if not features_only:
       # Calls final layers and returns logits.
-      with tf.variable_scope('head'):
+      with tf.compat.v1.variable_scope('head'):
         outputs = self._relu_fn(
             self._bn1(self._conv_head(outputs), training=training))
         outputs = self._avg_pooling(outputs)

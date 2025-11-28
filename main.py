@@ -41,19 +41,9 @@ print("Running in GPU/CPU mode (TPU Estimator not required)", file=sys.stderr)
 # This allows the rest of the code to work with tf1.* calls
 tf1 = tf.compat.v1
 
-# For estimator-specific code, we'll use a dummy that will be bypassed
-class DummyEstimator:
-    class ModeKeys:
-        TRAIN = 'train'
-        EVAL = 'eval'
-        PREDICT = 'predict'
-
-# Add dummy estimator to tf1 if it doesn't exist
-if not hasattr(tf1, 'estimator'):
-    tf1.estimator = type('obj', (object,), {
-        'ModeKeys': DummyEstimator.ModeKeys,
-        'tpu': None  # Will handle TPU calls separately
-    })
+# tf.compat.v1.estimator should exist in TF 2.x
+# We'll use it directly and only avoid TPU-specific parts
+# Don't override tf1.estimator - use what TensorFlow provides
 
 import efficientnet_builder
 import data_input
@@ -428,7 +418,7 @@ def model_fn(features, mode, params):
       scope = scope + '/'
     else:
       scope = ''
-    with tf.variable_scope(scope + scope_model_name, reuse=reuse):
+    with tf.compat.v1.variable_scope(scope + scope_model_name, reuse=reuse):
       if model_name.startswith('efficientnet'):
         logits, _ = efficientnet_builder.build_model(
             input_image,
@@ -750,108 +740,156 @@ def main(unused_argv):
     FLAGS.train_last_step_num = int(FLAGS.train_last_step_num)
     FLAGS.train_steps = int(FLAGS.train_steps)
 
-  if (FLAGS.tpu or FLAGS.use_tpu) and not FLAGS.master:
-    tpu_cluster_resolver = tf.distribute.cluster_resolver.TPUClusterResolver(
-        FLAGS.tpu,
-        zone=FLAGS.tpu_zone,
-        project=FLAGS.gcp_project)
-  else:
-    tpu_cluster_resolver = None
-
-  if FLAGS.use_tpu:
-    # TPU configuration - not supported in this version
-    raise ValueError("TPU training is not supported. Please use --use_tpu=False for GPU/CPU training.")
-  else:
-    # GPU/CPU configuration using standard RunConfig
-    session_config = tf1.ConfigProto()
-    session_config.gpu_options.allow_growth = True
-    
-    config = tf1.estimator.RunConfig(
-        model_dir=FLAGS.model_dir,
-        save_checkpoints_steps=max(FLAGS.save_checkpoints_steps, FLAGS.iterations_per_loop),
-        log_step_count_steps=FLAGS.log_step_count_steps,
-        keep_checkpoint_max=FLAGS.keep_checkpoint_max,
-        session_config=session_config)
-  
-  # Initializes model parameters.
+  # Initialize parameters
   params = dict(
       steps_per_epoch=steps_per_epoch,
-      use_bfloat16=False)  # bfloat16 is TPU-specific, use float32 for GPU
-  
-  # Use standard Estimator instead of TPUEstimator
-  est = tf1.estimator.Estimator(
-      model_fn=model_fn,
-      config=config,
-      params=params)
+      use_bfloat16=False,
+      batch_size=FLAGS.train_batch_size)
 
-  # Input pipelines are slightly different (with regards to shuffling and
-  # preprocessing) between training and evaluation.
-  if FLAGS.label_data_dir == FAKE_DATA_DIR:
-    tf.compat.v1.logging.info('Using fake dataset.')
-  else:
-    tf.compat.v1.logging.info('Using dataset: %s', FLAGS.label_data_dir)
-
+  # Create data input
   train_data = data_input.DataInput(
       is_training=True,
       data_dir=FLAGS.label_data_dir,
-      transpose_input=FLAGS.transpose_input,
+      transpose_input=False,  # Don't transpose for GPU training
       cache=FLAGS.use_cache,
       image_size=input_image_size,
       use_bfloat16=False)  # Use float32 for GPU training
-  if FLAGS.mode == 'train' or FLAGS.mode == 'train_and_eval':
-    current_step = tf.compat.v1.train.load_variable(
-        FLAGS.model_dir, tf.compat.v1.GraphKeys.GLOBAL_STEP) if tf.io.gfile.exists(
-            os.path.join(FLAGS.model_dir, 'checkpoint')) else 0
 
-    tf.compat.v1.logging.info(
-        'Training for %d steps (%.2f epochs in total). Current'
-        ' step %d.', FLAGS.train_last_step_num,
-        FLAGS.train_last_step_num / params['steps_per_epoch'],
-        current_step)
-
-    start_timestamp = time.time()  # This time will include compilation time
-
-    if FLAGS.mode == 'train':
-      # Create wrapper to pass batch_size to input_fn
-      def train_input_fn():
-        return train_data.input_fn({'batch_size': FLAGS.train_batch_size})
+  if FLAGS.mode == 'train':
+    tf.compat.v1.logging.info('Starting Keras-based training...')
+    
+    # Use tf.compat.v1 for session-based training
+    tf.compat.v1.disable_eager_execution()
+    
+    # Build the training graph
+    with tf.Graph().as_default():
+      # Get the dataset
+      dataset = train_data.input_fn(params)
+      iterator = tf.compat.v1.data.make_one_shot_iterator(dataset)
+      features = iterator.get_next()
       
-      est.train(
-          input_fn=train_input_fn,
-          max_steps=FLAGS.train_last_step_num,
-          hooks=[])
-  elif FLAGS.mode == 'eval':
-    input_fn_mapping = {}
-    for subset in ['dev', 'test']:
-      data_input_obj = data_input.DataInput(
-          is_training=False,
-          data_dir=FLAGS.label_data_dir,
-          transpose_input=FLAGS.transpose_input,
-          cache=False,
-          image_size=input_image_size,
-          use_bfloat16=False,  # Use float32 for GPU
-          subset=subset)
+      # Build model using model_fn logic
+      # Set mode to TRAIN
+      mode = 'train'
       
-      # Create wrapper to pass batch_size to input_fn
-      def make_eval_input_fn(data_obj):
-        def eval_input_fn():
-          return data_obj.input_fn({'batch_size': FLAGS.eval_batch_size})
-        return eval_input_fn
+      # Build the model graph (simplified version of model_fn)
+      image = features['image']
+      labels = features['label']
       
-      input_fn_mapping[subset] = make_eval_input_fn(data_input_obj)
+      # Preprocess
+      if FLAGS.data_format == 'channels_first':
+        image = tf.transpose(image, [0, 3, 1, 2])
       
-      if subset == 'dev':
-        num_images = FLAGS.num_eval_images
+      # Normalize
+      mean, std = task_info.get_mean_std(FLAGS.task_name)
+      if FLAGS.data_format == 'channels_first':
+        stats_shape = [3, 1, 1]
       else:
-        num_images = FLAGS.num_test_images
-      eval_results = est.evaluate(
-          input_fn=input_fn_mapping[subset],
-          steps=num_images // FLAGS.eval_batch_size)
-      tf.compat.v1.logging.info('%s, results: %s', subset, eval_results)
+        stats_shape = [1, 1, 3]
+      image -= tf.constant(mean, shape=stats_shape, dtype=image.dtype)
+      image /= tf.constant(std, shape=stats_shape, dtype=image.dtype)
+      
+      # Build EfficientNet model
+      override_params = {}
+      if FLAGS.dropout_rate is not None:
+        override_params['dropout_rate'] = FLAGS.dropout_rate
+      if FLAGS.data_format:
+        override_params['data_format'] = FLAGS.data_format
+      if FLAGS.num_label_classes:
+        override_params['num_classes'] = FLAGS.num_label_classes
+      
+      with tf.compat.v1.variable_scope(FLAGS.model_name):
+        logits, _ = efficientnet_builder.build_model(
+            image,
+            model_name=FLAGS.model_name,
+            training=True,
+            override_params=override_params,
+            model_dir=FLAGS.model_dir)
+      
+      # Compute loss
+      cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
+          labels=labels, logits=logits)
+      loss = tf.reduce_mean(cross_entropy)
+      
+      # Add weight decay
+      if FLAGS.weight_decay:
+        loss += FLAGS.weight_decay * tf.add_n([
+            tf.nn.l2_loss(v) for v in tf.trainable_variables()
+            if 'batch_normalization' not in v.name
+        ])
+      
+      # Create optimizer
+      global_step = tf.compat.v1.train.get_or_create_global_step()
+      learning_rate = tf.compat.v1.train.exponential_decay(
+          FLAGS.base_learning_rate,
+          global_step,
+          decay_steps=int(steps_per_epoch * FLAGS.lr_decay_epoch),
+          decay_rate=FLAGS.lr_decay_rate,
+          staircase=True)
+      
+      optimizer = tf.compat.v1.train.MomentumOptimizer(
+          learning_rate=learning_rate,
+          momentum=0.9)
+      
+      train_op = optimizer.minimize(loss, global_step=global_step)
+      
+      # Compute accuracy
+      predictions = tf.argmax(logits, axis=1, output_type=tf.int32)
+      accuracy = tf.reduce_mean(
+          tf.cast(tf.equal(predictions, labels), tf.float32))
+      
+      # Create session and train
+      config = tf.compat.v1.ConfigProto()
+      config.gpu_options.allow_growth = True
+      
+      with tf.compat.v1.Session(config=config) as sess:
+        sess.run(tf.compat.v1.global_variables_initializer())
+        
+        # Create saver
+        saver = tf.compat.v1.train.Saver(max_to_keep=FLAGS.keep_checkpoint_max)
+        
+        # Restore checkpoint if exists
+        ckpt = tf.train.latest_checkpoint(FLAGS.model_dir)
+        if ckpt:
+          tf.compat.v1.logging.info(f'Restoring from checkpoint: {ckpt}')
+          saver.restore(sess, ckpt)
+        
+        current_step = sess.run(global_step)
+        tf.compat.v1.logging.info(
+            f'Training for {FLAGS.train_last_step_num} steps '
+            f'({FLAGS.train_last_step_num / steps_per_epoch:.2f} epochs). '
+            f'Current step: {current_step}')
+        
+        # Training loop
+        while current_step < FLAGS.train_last_step_num:
+          _, loss_val, acc_val, current_step = sess.run(
+              [train_op, loss, accuracy, global_step])
+          
+          if current_step % FLAGS.log_step_count_steps == 0:
+            tf.compat.v1.logging.info(
+                f'Step {current_step}: loss={loss_val:.4f}, accuracy={acc_val:.4f}')
+          
+          if current_step % FLAGS.save_checkpoints_steps == 0:
+            save_path = saver.save(
+                sess, 
+                os.path.join(FLAGS.model_dir, 'model.ckpt'),
+                global_step=current_step)
+            tf.compat.v1.logging.info(f'Saved checkpoint to {save_path}')
+        
+        # Final save
+        save_path = saver.save(
+            sess,
+            os.path.join(FLAGS.model_dir, 'model.ckpt'),
+            global_step=current_step)
+        tf.compat.v1.logging.info(f'Training completed. Final checkpoint: {save_path}')
+  
+  elif FLAGS.mode == 'eval':
+    tf.compat.v1.logging.info('Evaluation mode not yet implemented for Keras training')
+    raise NotImplementedError('Eval mode needs to be implemented')
+  
   elif FLAGS.mode == 'predict':
-      predict_label.run_prediction(est)
-  else:
-      assert False
+    tf.compat.v1.logging.info('Prediction mode not yet implemented for Keras training')
+    raise NotImplementedError('Predict mode needs to be implemented')
 
 
 if __name__ == '__main__':

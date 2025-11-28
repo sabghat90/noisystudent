@@ -148,7 +148,7 @@ def small_image_crop(image):
                                 [amount, amount],
                                 [0, 0]]),
                    'REFLECT')
-  cropped_data = tf.random_crop(pad_inp, tf.shape(image))
+  cropped_data = tf.image.random_crop(pad_inp, tf.shape(image))
   return cropped_data
 
 

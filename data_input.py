@@ -84,11 +84,11 @@ class TFExampleInput(object):
       Returns a tuple of (image, label) from the TFExample.
     '''
     keys_to_features = {
-        'image/encoded': tf.FixedLenFeature((), tf.string, ''),
-        'image/class/label': tf.FixedLenFeature([], tf.int64, -1),
+        'image/encoded': tf.io.FixedLenFeature((), tf.string, ''),
+        'image/class/label': tf.io.FixedLenFeature([], tf.int64, -1),
     }
 
-    parsed = tf.parse_single_example(value, keys_to_features)
+    parsed = tf.io.parse_single_example(value, keys_to_features)
     image_bytes = tf.reshape(parsed['image/encoded'], shape=[])
 
     image = self.image_preprocessing_fn(
@@ -132,15 +132,15 @@ class TFExampleInput(object):
   def unl_dst_parser(self, value):
     keys_to_features = {
         'probabilities':
-            tf.FixedLenFeature([FLAGS.num_label_classes], tf.float32),
+            tf.io.FixedLenFeature([FLAGS.num_label_classes], tf.float32),
         'label':
-            tf.FixedLenFeature([], tf.int64, -1),
+            tf.io.FixedLenFeature([], tf.int64, -1),
         'prob':
-            tf.FixedLenFeature([], tf.float32),
+            tf.io.FixedLenFeature([], tf.float32),
         'image/encoded':
-            tf.FixedLenFeature((), tf.string, ''),
+            tf.io.FixedLenFeature((), tf.string, ''),
     }
-    parsed = tf.parse_single_example(value, keys_to_features)
+    parsed = tf.io.parse_single_example(value, keys_to_features)
     image_bytes = tf.reshape(parsed['image/encoded'], shape=[])
     ori_image = tf.image.decode_jpeg(image_bytes, channels=3)
 
