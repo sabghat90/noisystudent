@@ -52,7 +52,7 @@ def build_learning_rate(
   if lr_decay_type == 'exponential':
     assert steps_per_epoch is not None
     decay_steps = steps_per_epoch * decay_epochs
-    lr = tf.train.exponential_decay(
+    lr = tf.compat.v1.train.exponential_decay(
         initial_lr, lr_step, decay_steps, decay_factor, staircase=True)
   elif lr_decay_type == 'cosine':
     assert total_steps is not None
@@ -64,7 +64,7 @@ def build_learning_rate(
     assert False, 'Unknown lr_decay_type : %s' % lr_decay_type
 
   if warmup_epochs:
-    tf.logging.info('Learning rate warmup_epochs: %d' % warmup_epochs)
+    tf.compat.v1.logging.info('Learning rate warmup_epochs: %d' % warmup_epochs)
     warmup_steps = int(warmup_epochs * steps_per_epoch)
     warmup_lr = (
         initial_lr * tf.cast(lr_step, tf.float32) / tf.cast(
@@ -81,24 +81,24 @@ def build_optimizer(learning_rate,
                     momentum=0.9):
   '''Build optimizer.'''
   if optimizer_name == 'sgd':
-    tf.logging.info('Using SGD optimizer')
-    optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
+    tf.compat.v1.logging.info('Using SGD optimizer')
+    optimizer = tf.compat.v1.train.GradientDescentOptimizer(learning_rate=learning_rate)
   elif optimizer_name == 'momentum':
-    tf.logging.info('Using Momentum optimizer')
-    optimizer = tf.train.MomentumOptimizer(
+    tf.compat.v1.logging.info('Using Momentum optimizer')
+    optimizer = tf.compat.v1.train.MomentumOptimizer(
         learning_rate=learning_rate, momentum=momentum)
   elif optimizer_name == 'rmsprop':
-    tf.logging.info('Using RMSProp optimizer')
-    optimizer = tf.train.RMSPropOptimizer(learning_rate, decay, momentum,
+    tf.compat.v1.logging.info('Using RMSProp optimizer')
+    optimizer = tf.compat.v1.train.RMSPropOptimizer(learning_rate, decay, momentum,
                                           epsilon)
   else:
-    tf.logging.fatal('Unknown optimizer:', optimizer_name)
+    tf.compat.v1.logging.fatal('Unknown optimizer:', optimizer_name)
 
   return optimizer
 
 
-class TpuBatchNormalization(tf.layers.BatchNormalization):
-  # class TpuBatchNormalization(tf.layers.BatchNormalization):
+class TpuBatchNormalization(tf.compat.v1.layers.BatchNormalization):
+  # class TpuBatchNormalization(tf.compat.v1.layers.BatchNormalization):
   '''Cross replica batch normalization.'''
 
   def __init__(self, fused=False, **kwargs):
@@ -138,7 +138,7 @@ class TpuBatchNormalization(tf.layers.BatchNormalization):
         num_shards_per_group = 1
       else:
         num_shards_per_group = max(8, num_shards // 8)
-    tf.logging.info('TpuBatchNormalization with num_shards_per_group %s',
+    tf.compat.v1.logging.info('TpuBatchNormalization with num_shards_per_group %s',
                     num_shards_per_group)
     if num_shards_per_group > 1 or num_shards_per_group == -2:
       # Compute variance using: Var[X]= E[X^2] - E[X]^2.
@@ -166,9 +166,9 @@ def stochastic_depth(inputs, is_training, stochastic_depth_rate):
   # Compute stochastic_depth tensor
   batch_size = tf.shape(inputs)[0]
   random_tensor = keep_prob
-  random_tensor += tf.random_uniform([batch_size, 1, 1, 1], dtype=inputs.dtype)
+  random_tensor += tf.random.uniform([batch_size, 1, 1, 1], dtype=inputs.dtype)
   binary_tensor = tf.floor(random_tensor)
-  output = tf.div(inputs, keep_prob) * binary_tensor
+  output = tf.divide(inputs, keep_prob) * binary_tensor
   return output
 
 
@@ -178,47 +178,47 @@ def archive_ckpt(ckpt_eval, ckpt_objective, ckpt_path):
 
   saved_objective_path = os.path.join(ckpt_dir, 'best_objective.txt')
   saved_objective = float('-inf')
-  if tf.gfile.Exists(saved_objective_path):
-    with tf.gfile.GFile(saved_objective_path, 'r') as f:
+  if tf.io.gfile.exists(saved_objective_path):
+    with tf.io.gfile.GFile(saved_objective_path, 'r') as f:
       saved_objective = float(f.read())
   if saved_objective > ckpt_objective:
-    tf.logging.info('Ckpt %s is worse than %s', ckpt_objective, saved_objective)
+    tf.compat.v1.logging.info('Ckpt %s is worse than %s', ckpt_objective, saved_objective)
     return False
 
-  filenames = tf.gfile.Glob(ckpt_path + '.*')
+  filenames = tf.io.gfile.glob(ckpt_path + '.*')
   if filenames is None:
-    tf.logging.info('No files to copy for checkpoint %s', ckpt_path)
+    tf.compat.v1.logging.info('No files to copy for checkpoint %s', ckpt_path)
     return False
 
   # Clear the old folder.
   dst_dir = os.path.join(ckpt_dir, 'archive')
-  if tf.gfile.Exists(dst_dir):
-    tf.gfile.DeleteRecursively(dst_dir)
-  tf.gfile.MakeDirs(dst_dir)
+  if tf.io.gfile.exists(dst_dir):
+    tf.io.gfile.rmtree(dst_dir)
+  tf.io.gfile.makedirs(dst_dir)
 
   # Write checkpoints.
   for f in filenames:
     dest = os.path.join(dst_dir, os.path.basename(f))
-    tf.gfile.Copy(f, dest, overwrite=True)
-  ckpt_state = tf.train.generate_checkpoint_state_proto(
+    tf.io.gfile.copy(f, dest, overwrite=True)
+  ckpt_state = tf.compat.v1.train.generate_checkpoint_state_proto(
       dst_dir,
       model_checkpoint_path=ckpt_name,
       all_model_checkpoint_paths=[ckpt_name])
-  with tf.gfile.GFile(os.path.join(dst_dir, 'checkpoint'), 'w') as f:
+  with tf.io.gfile.GFile(os.path.join(dst_dir, 'checkpoint'), 'w') as f:
     f.write(str(ckpt_state))
-  with tf.gfile.GFile(os.path.join(dst_dir, 'best_eval.txt'), 'w') as f:
+  with tf.io.gfile.GFile(os.path.join(dst_dir, 'best_eval.txt'), 'w') as f:
     f.write('%s' % ckpt_eval)
 
   # Update the best objective.
-  with tf.gfile.GFile(saved_objective_path, 'w') as f:
+  with tf.io.gfile.GFile(saved_objective_path, 'w') as f:
     f.write('%f' % ckpt_objective)
 
-  tf.logging.info('Copying checkpoint %s to %s', ckpt_path, dst_dir)
+  tf.compat.v1.logging.info('Copying checkpoint %s to %s', ckpt_path, dst_dir)
   return True
 
 
 # TODO(hongkuny): Consolidate this as a common library cross models.
-class DepthwiseConv2D(tf.keras.layers.DepthwiseConv2D, tf.layers.Layer):
+class DepthwiseConv2D(tf.keras.layers.DepthwiseConv2D, tf.compat.v1.layers.Layer):
   '''Wrap keras DepthwiseConv2D to tf.layers.'''
 
   pass
@@ -226,9 +226,9 @@ class DepthwiseConv2D(tf.keras.layers.DepthwiseConv2D, tf.layers.Layer):
 
 def save_pic(uint8_arr, filename, log=True):
   if log:
-    tf.logging.info('saving {}'.format(filename))
+    tf.compat.v1.logging.info('saving {}'.format(filename))
   img = Image.fromarray(uint8_arr)
-  with tf.gfile.Open(filename, 'wb') as ouf:
+  with tf.io.gfile.GFile(filename, 'wb') as ouf:
     img.save(ouf, subsampling=0, quality=100)
 
 
@@ -258,7 +258,7 @@ class ImageCoder(object):
 
   def __init__(self):
     # Create a single Session to run all image coding calls.
-    self._sess = tf.Session()
+    self._sess = tf.compat.v1.Session()
 
     # Initializes function that decodes RGB JPEG data.
     self._decode_jpeg_data = tf.placeholder(dtype=tf.string)
@@ -279,7 +279,7 @@ def iterate_through_dataset(dst):
   iter = dst.make_initializable_iterator()
   elem = iter.get_next()
   cnt = 0
-  with tf.Session() as sess:
+  with tf.compat.v1.Session() as sess:
     sess.run(iter.initializer)
     try:
       while True:
@@ -307,7 +307,7 @@ def get_assignment_map_from_checkpoint(vars_list, init_checkpoint, only_teacher_
     graph_to_ckpt_map[ori_name] = ckpt_name
     assignment_map[ckpt_name] = var
 
-  init_vars = tf.train.list_variables(init_checkpoint)
+  init_vars = tf.compat.v1.train.list_variables(init_checkpoint)
   initialized_variable = {}
   for x in init_vars:
     (name, var) = (x[0], x[1])
@@ -343,15 +343,15 @@ def construct_scalar_host_call(
           # with tf.contrib.summary.record_summaries_every_n_global_steps(100, gs):
           tf2.summary.scalar(name, scalar, step=gs)
         return tf.summary.all_v2_summary_ops()
-  global_step_tensor = tf.reshape(tf.train.get_or_create_global_step(), [1])
+  global_step_tensor = tf.reshape(tf.compat.v1.train.get_or_create_global_step(), [1])
   other_tensors = [tf.reshape(metric_dict[key], [1]) for key in metric_names]
   host_call = (host_call_fn, [global_step_tensor] + other_tensors)
   return host_call
 
 
 def get_all_variable():
-  var_list = tf.trainable_variables() + tf.get_collection('moving_vars')
-  for v in tf.global_variables():
+  var_list = tf.compat.v1.trainable_variables() + tf.compat.v1.get_collection('moving_vars')
+  for v in tf.compat.v1.global_variables():
     # We maintain mva for batch norm moving mean and variance as well.
     if 'moving_mean' in v.name or 'moving_variance' in v.name:
       var_list.append(v)
@@ -372,19 +372,19 @@ def init_from_ckpt(scaffold_fn):
       all_var_list, init_ckpt, FLAGS.teacher_model_name is not None)
   if FLAGS.use_tpu:
     def tpu_scaffold():
-      tf.logging.info('initializing from {}'.format(init_ckpt))
+      tf.compat.v1.logging.info('initializing from {}'.format(init_ckpt))
       tf.train.init_from_checkpoint(init_ckpt, assignment_map)
       return tf.train.Scaffold()
     scaffold_fn = tpu_scaffold
   else:
-    tf.train.init_from_checkpoint(init_ckpt, assignment_map)
-  tf.logging.info('**** Variables ****')
+    tf.compat.v1.train.init_from_checkpoint(init_ckpt, assignment_map)
+  tf.compat.v1.logging.info('**** Variables ****')
   for var in all_var_list:
     init_string = ''
     if var.name in graph_to_ckpt_map:
       init_string = ', *INIT_FROM_CKPT* <== {}'.format(
           graph_to_ckpt_map[var.name])
-    tf.logging.info('  name = %s, shape = %s%s', var.name, var.shape,
+    tf.compat.v1.logging.info('  name = %s, shape = %s%s', var.name, var.shape,
                     init_string)
   return scaffold_fn
 
@@ -393,7 +393,7 @@ def get_filename(data_dir, file_prefix, shard_id, num_shards):
   filename = os.path.join(
       data_dir,
       '%s-%05d-of-%05d' % (file_prefix, shard_id, num_shards))
-  tf.logging.info('processing %s', filename)
+  tf.compat.v1.logging.info('processing %s', filename)
   return filename
 
 
@@ -414,7 +414,7 @@ def parse_tfrecord(encoded_example):
   keys_to_features = {
       'image/encoded': tf.FixedLenFeature((), tf.string),
   }
-  parsed = tf.parse_single_example(encoded_example, keys_to_features)
+  parsed = tf.io.parse_single_example(encoded_example, keys_to_features)
   return parsed
 
 
@@ -440,7 +440,7 @@ def get_reassign_filename(data_dir, file_prefix, shard_id, num_shards, worker_id
   filename = os.path.join(
       data_dir,
       '%s-%d-%05d-of-%05d' % (file_prefix, worker_id, shard_id, num_shards))
-  tf.logging.info('writing to %s', filename)
+  tf.compat.v1.logging.info('writing to %s', filename)
   return filename
 
 def get_uid_list():
@@ -454,7 +454,7 @@ def label_dataset(worker_id, prediction_dir, shard_id, num_shards):
         'probabilities': tf.FixedLenFeature([FLAGS.num_label_classes], tf.float32),
         'classes': tf.FixedLenFeature([], tf.int64),
     }
-    parsed = tf.parse_single_example(value, keys_to_features)
+    parsed = tf.io.parse_single_example(value, keys_to_features)
     features = {}
     features['probabilities'] = tf.cast(
         tf.reshape(parsed['probabilities'], shape=[FLAGS.num_label_classes]), dtype=tf.float32)
@@ -469,12 +469,9 @@ def label_dataset(worker_id, prediction_dir, shard_id, num_shards):
     buffer_size = 8 * 1024 * 1024
     dataset = tf.data.TFRecordDataset(filename, buffer_size=buffer_size)
     return dataset
-  dst = dst.apply(
-      tf.data.experimental.parallel_interleave(
-          fetch_dataset, cycle_length=1))
-  dst = dst.apply(
-      tf.data.experimental.map_and_batch(
-          label_dst_parser, batch_size=1,
-          num_parallel_batches=16))
-  dst = dst.prefetch(tf.data.experimental.AUTOTUNE)
+  dst = dst.interleave(
+      fetch_dataset, cycle_length=1, num_parallel_calls=tf.data.AUTOTUNE)
+  dst = dst.map(
+      label_dst_parser, num_parallel_calls=16).batch(1)
+  dst = dst.prefetch(tf.data.AUTOTUNE)
   return dst

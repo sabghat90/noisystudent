@@ -293,7 +293,7 @@ flags.DEFINE_integer(
 
 def _scaffold_fn(restore_vars_dict):
   max_to_keep = FLAGS.keep_checkpoint_max
-  saver = tf.train.Saver(restore_vars_dict, max_to_keep=max_to_keep)
+  saver = tf.compat.v1.train.Saver(restore_vars_dict, max_to_keep=max_to_keep)
   return tf.train.Scaffold(saver=saver)
 
 
@@ -346,7 +346,7 @@ def model_fn(features, mode, params):
   image = preprocess_image(image)
 
   image_shape = image.get_shape().as_list()
-  tf.logging.info('image shape: {}'.format(image_shape))
+  tf.compat.v1.logging.info('image shape: {}'.format(image_shape))
   is_training = (mode == tf.estimator.ModeKeys.TRAIN)
 
   if mode != tf.estimator.ModeKeys.PREDICT:
@@ -367,12 +367,12 @@ def model_fn(features, mode, params):
   assert lab_bsz == batch_size
 
   metric_dict = {}
-  global_step = tf.train.get_global_step()
+  global_step = tf.compat.v1.train.get_global_step()
 
   has_moving_average_decay = (FLAGS.moving_average_decay > 0)
   # This is essential, if using a keras-derived model.
   tf.keras.backend.set_learning_phase(is_training)
-  tf.logging.info('Using open-source implementation.')
+  tf.compat.v1.logging.info('Using open-source implementation.')
   override_params = {}
   if FLAGS.dropout_rate is not None:
     override_params['dropout_rate'] = FLAGS.dropout_rate
@@ -454,7 +454,7 @@ def model_fn(features, mode, params):
           decay=FLAGS.moving_average_decay)
       ema_vars = utils.get_all_variable()
       restore_vars_dict = ema.variables_to_restore(ema_vars)
-      tf.logging.info('restored variables:\n%s',
+      tf.compat.v1.logging.info('restored variables:\n%s',
                       json.dumps(sorted(restore_vars_dict.keys()), indent=4))
 
     predictions = {
@@ -479,7 +479,7 @@ def model_fn(features, mode, params):
   lab_logits = logits[:lab_bsz]
   lab_pred = tf.argmax(lab_logits, axis=-1, output_type=labels.dtype)
   lab_prob = tf.nn.softmax(lab_logits)
-  lab_acc = tf.to_float(tf.equal(lab_pred, lab_labels))
+  lab_acc = tf.cast(tf.equal(lab_pred, lab_labels), tf.float32)
   metric_dict['lab/acc'] = tf.reduce_mean(lab_acc)
   metric_dict['lab/pred_prob'] = tf.reduce_mean(
       tf.reduce_max(lab_prob, axis=-1)
@@ -491,7 +491,7 @@ def model_fn(features, mode, params):
     unl_logits = logits[lab_bsz:]
     unl_pred = tf.argmax(unl_logits, axis=-1, output_type=labels.dtype)
     unl_prob = tf.nn.softmax(unl_logits)
-    unl_acc = tf.to_float(tf.equal(unl_pred, unl_labels))
+    unl_acc = tf.cast(tf.equal(unl_pred, unl_labels), tf.float32)
     metric_dict['unl/acc_to_dump'] = tf.reduce_mean(unl_acc)
     metric_dict['unl/pred_prob'] = tf.reduce_mean(
         tf.reduce_max(unl_prob, axis=-1)
@@ -507,7 +507,7 @@ def model_fn(features, mode, params):
   if FLAGS.label_data_sample_prob != 1:
     # mask out part of the labeled data
     random_mask = tf.floor(
-        FLAGS.label_data_sample_prob + tf.random_uniform(
+        FLAGS.label_data_sample_prob + tf.random.uniform(
             tf.shape(lab_loss), dtype=lab_loss.dtype))
     lab_loss = tf.reduce_mean(lab_loss * random_mask)
   else:
@@ -544,14 +544,14 @@ def model_fn(features, mode, params):
   else:
     unl_loss = 0
 
-  real_lab_bsz = tf.to_float(lab_bsz) * FLAGS.label_data_sample_prob
+  real_lab_bsz = tf.cast(lab_bsz, tf.float32) * FLAGS.label_data_sample_prob
   real_unl_bsz = batch_size * FLAGS.label_data_sample_prob * FLAGS.unlabel_ratio
   data_loss = lab_loss * real_lab_bsz + unl_loss * real_unl_bsz
   data_loss = data_loss / real_lab_bsz
 
   # Add weight decay to the loss for non-batch-normalization variables.
   loss = data_loss + FLAGS.weight_decay * tf.add_n(
-      [tf.nn.l2_loss(v) for v in tf.trainable_variables()
+      [tf.nn.l2_loss(v) for v in tf.compat.v1.trainable_variables()
        if 'batch_normalization' not in v.name])
   metric_dict['train/data_loss'] = data_loss
   metric_dict['train/loss'] = loss
@@ -571,7 +571,7 @@ def model_fn(features, mode, params):
       total_epochs = FLAGS.train_steps * FLAGS.train_batch_size * 1. / FLAGS.num_train_images - 5
       decay_times = math.log(FLAGS.final_base_lr / FLAGS.base_learning_rate) / math.log(0.97)
       decay_epochs = total_epochs / decay_times
-      tf.logging.info(
+      tf.compat.v1.logging.info(
           'setting decay_epochs to {:.2f}'.format(decay_epochs) + '\n' * 3)
     else:
       decay_epochs = 2.4 * FLAGS.train_ratio
@@ -594,7 +594,7 @@ def model_fn(features, mode, params):
     # Batch normalization requires UPDATE_OPS to be added as a dependency to
     # the train operation.
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-    tvars = tf.trainable_variables()
+    tvars = tf.compat.v1.trainable_variables()
     g_vars = []
     tvars = sorted(tvars, key=lambda var: var.name)
     for var in tvars:
@@ -657,8 +657,8 @@ def model_fn(features, mode, params):
 
     eval_metrics = (metric_fn, [labels, logits])
 
-  num_params = np.sum([np.prod(v.shape) for v in tf.trainable_variables()])
-  tf.logging.info('number of trainable parameters: {}'.format(num_params))
+  num_params = np.sum([np.prod(v.shape) for v in tf.compat.v1.trainable_variables()])
+  tf.compat.v1.logging.info('number of trainable parameters: {}'.format(num_params))
 
   return tf.estimator.tpu.TPUEstimatorSpec(
       mode=mode,
@@ -691,9 +691,9 @@ def main(unused_argv):
   steps_per_epoch = (FLAGS.num_train_images /
                      (FLAGS.train_batch_size * FLAGS.label_data_sample_prob))
   if FLAGS.mode == 'train' or FLAGS.mode == 'train_and_eval':
-    tf.gfile.MakeDirs(FLAGS.model_dir)
-    flags_dict = tf.app.flags.FLAGS.flag_values_dict()
-    with tf.gfile.Open(os.path.join(FLAGS.model_dir, 'FLAGS.json'), 'w') as ouf:
+    tf.io.gfile.makedirs(FLAGS.model_dir)
+    flags_dict = flags.FLAGS.flag_values_dict()
+    with tf.io.gfile.GFile(os.path.join(FLAGS.model_dir, 'FLAGS.json'), 'w') as ouf:
       json.dump(flags_dict, ouf)
   input_image_size = FLAGS.input_image_size
   if not input_image_size:
@@ -756,9 +756,9 @@ def main(unused_argv):
   # Input pipelines are slightly different (with regards to shuffling and
   # preprocessing) between training and evaluation.
   if FLAGS.label_data_dir == FAKE_DATA_DIR:
-    tf.logging.info('Using fake dataset.')
+    tf.compat.v1.logging.info('Using fake dataset.')
   else:
-    tf.logging.info('Using dataset: %s', FLAGS.label_data_dir)
+    tf.compat.v1.logging.info('Using dataset: %s', FLAGS.label_data_dir)
 
   train_data = data_input.DataInput(
       is_training=True,
@@ -771,7 +771,7 @@ def main(unused_argv):
     current_step = estimator._load_global_step_from_checkpoint_dir(
         FLAGS.model_dir)  # pylint: disable=protected-access,line-too-long
 
-    tf.logging.info(
+    tf.compat.v1.logging.info(
         'Training for %d steps (%.2f epochs in total). Current'
         ' step %d.', FLAGS.train_last_step_num,
         FLAGS.train_last_step_num / params['steps_per_epoch'],
@@ -802,7 +802,7 @@ def main(unused_argv):
       eval_results = est.evaluate(
           input_fn=input_fn_mapping[subset],
           steps=num_images // FLAGS.eval_batch_size)
-      tf.logging.info('%s, results: %s', subset, eval_results)
+      tf.compat.v1.logging.info('%s, results: %s', subset, eval_results)
   elif FLAGS.mode == 'predict':
       predict_label.run_prediction(est)
   else:
@@ -810,5 +810,5 @@ def main(unused_argv):
 
 
 if __name__ == '__main__':
-  tf.logging.set_verbosity(tf.logging.INFO)
+  tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
   app.run(main)

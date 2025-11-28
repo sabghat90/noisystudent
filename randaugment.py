@@ -524,7 +524,7 @@ def distort_image_with_randaugment(image, num_layers, magnitude,
     The augmented version of `image`.
   '''
   replace_value = [128] * 3
-  tf.logging.info('Using RandAug.')
+  tf.compat.v1.logging.info('Using RandAug.')
   augmentation_hparams = contrib_training.HParams(
       cutout_const=cutout_const, translate_const=translate_const)
   available_ops = [
@@ -533,10 +533,10 @@ def distort_image_with_randaugment(image, num_layers, magnitude,
       'ShearX', 'ShearY', 'TranslateX', 'TranslateY', 'SolarizeAdd']
   if FLAGS.cutout_op:
     available_ops += ['Cutout']
-  tf.logging.info('available ops {}'.format(str(available_ops)))
+  tf.compat.v1.logging.info('available ops {}'.format(str(available_ops)))
 
   for layer_num in range(num_layers):
-    op_to_select = tf.random_uniform(
+    op_to_select = tf.random.uniform(
         [], maxval=len(available_ops), dtype=tf.int32)
     random_magnitude = float(magnitude)
     with tf.name_scope('randaug_layer_{}'.format(layer_num)):

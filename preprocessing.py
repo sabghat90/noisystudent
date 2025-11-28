@@ -19,11 +19,12 @@ from __future__ import print_function
 
 import tensorflow as tf
 import randaugment
+from absl import flags
 
 IMAGE_SIZE = 224
 CROP_PADDING = 32
 
-FLAGS = tf.app.flags.FLAGS
+FLAGS = flags.FLAGS
 
 def _distorted_bounding_box_crop(image,
                                  bbox,
@@ -172,7 +173,7 @@ def _preprocess_for_train(image, use_bfloat16, image_size=IMAGE_SIZE,
 
   if augment_name:
     input_image_type = image.dtype
-    tf.logging.info('Apply augment {}'.format(augment_name))
+    tf.compat.v1.logging.info('Apply augment {}'.format(augment_name))
     image = tf.clip_by_value(image, 0.0, 255.0)
     image = tf.cast(image, dtype=tf.uint8)
     if augment_name == 'v1':

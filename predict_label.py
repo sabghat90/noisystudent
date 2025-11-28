@@ -100,7 +100,7 @@ def get_input_fn(params, raw_data=False):
         '%s-%d-%05d-of-%05d' % (
             FLAGS.file_prefix, FLAGS.worker_id,
             shard_id, FLAGS.num_shards))
-    tf.logging.info('processing {}'.format(filename))
+    tf.compat.v1.logging.info('processing {}'.format(filename))
     # do not use replica here
     dst = utils.get_dst_from_filename(filename, FLAGS.data_type)
   else:
@@ -112,12 +112,10 @@ def get_input_fn(params, raw_data=False):
 
   if raw_data:
     return dst
-  dst = dst.apply(
-      tf.data.experimental.map_and_batch(
-          functools.partial(preprocess), batch_size=batch_size,
-          num_parallel_batches=16, drop_remainder=False))
+  dst = dst.map(
+      functools.partial(preprocess), num_parallel_calls=16).batch(batch_size, drop_remainder=False)
   dst = dst.map(functools.partial(set_shapes, batch_size))
-  dst = dst.prefetch(tf.data.experimental.AUTOTUNE)
+  dst = dst.prefetch(tf.data.AUTOTUNE)
   return dst
 
 
@@ -163,8 +161,8 @@ def get_num_image():
       'info-%.5d-of-%.5d-%.5d.txt' % (
           shard_id, FLAGS.num_shards, FLAGS.worker_id))
   print(info_file + '\n' * 10)
-  if not FLAGS.reassign_label and tf.gfile.Exists(info_file):
-    with tf.gfile.Open(info_file) as inf:
+  if not FLAGS.reassign_label and tf.io.gfile.exists(info_file):
+    with tf.io.gfile.GFile(info_file) as inf:
       info = json.load(inf)
     worker_image_num = info['image_num']
     tf.logging.info('\n\n\nloaded worker image num')
@@ -179,7 +177,7 @@ def get_num_image():
       if worker_image_num % 100 == 0:
         tf.logging.info('image num %d', worker_image_num)
     if not FLAGS.reassign_label:
-      with tf.gfile.Open(info_file, 'w') as ouf:
+      with tf.io.gfile.GFile(info_file, 'w') as ouf:
         info = {
             'image_num': worker_image_num,
         }

@@ -66,18 +66,18 @@ def download_and_extract():
           split, field))):
         all_exist = False
   if all_exist:
-    tf.logging.info('found all merged files')
+    tf.compat.v1.logging.info('found all merged files')
     return
-  tf.logging.info('downloading dataset')
-  tf.gfile.MakeDirs(download_folder)
-  tf.gfile.MakeDirs(merge_folder)
+  tf.compat.v1.logging.info('downloading dataset')
+  tf.io.gfile.makedirs(download_folder)
+  tf.io.gfile.makedirs(merge_folder)
   if FLAGS.task_name == 'svhn':
     for split in splits:
       filename = os.path.join(download_folder, '{}_32x32.mat'.format(split))
       urlretrieve(SVHN_DOWNLOAD_URL.format(split), filename)
-      tf.logging.info('downloaded {}'.format(filename))
+      tf.compat.v1.logging.info('downloaded {}'.format(filename))
       filename = os.path.join(download_folder, '{}_32x32.mat'.format(split))
-      data_dict = scipy.io.loadmat(tf.gfile.Open(filename, "rb"))
+      data_dict = scipy.io.loadmat(tf.io.gfile.GFile(filename, "rb"))
       images = np.transpose(data_dict['X'], [3, 0, 1, 2])
       labels = data_dict['y'].reshape(-1)
       labels[labels == 10] = 0
@@ -92,10 +92,10 @@ def load_dataset():
   if FLAGS.task_name == 'svhn':
     splits += ['extra']
   for split in splits:
-    with tf.gfile.Open(
+    with tf.io.gfile.GFile(
         os.path.join(merge_folder, '{}_images.npy'.format(split)), 'rb') as inf:
       images = np.load(inf)
-    with tf.gfile.Open(
+    with tf.io.gfile.GFile(
         os.path.join(merge_folder, '{}_labels.npy'.format(split)), 'rb') as inf:
       labels = np.load(inf)
     data[split] = {'images': images, 'labels': labels}
@@ -104,7 +104,7 @@ def load_dataset():
 
 def save_tfrecord(data):
   coder = utils.ImageCoder()
-  tf.gfile.MakeDirs(FLAGS.output_dir)
+  tf.io.gfile.makedirs(FLAGS.output_dir)
   for subset in data:
     if subset == 'train' or subset == 'extra':
       num_shards = 128
@@ -115,7 +115,7 @@ def save_tfrecord(data):
     cnt = 0
     if subset == 'extra':
       output_dir = os.path.join(FLAGS.output_dir, 'unlabeled')
-      tf.gfile.MakeDirs(output_dir)
+      tf.io.gfile.makedirs(output_dir)
     else:
       output_dir = FLAGS.output_dir
     for i in range(len(shard_spacing) - 1):
@@ -124,7 +124,7 @@ def save_tfrecord(data):
       else:
         output_filename = '%s-%.5d-of-%.5d' % (subset, i, num_shards)
       if i % 10 == 0:
-        tf.logging.info('saving {}'.format(output_filename))
+        tf.compat.v1.logging.info('saving {}'.format(output_filename))
       writer = tf.python_io.TFRecordWriter(
           os.path.join(output_dir, output_filename))
       for j in range(shard_spacing[i], shard_spacing[i + 1]):
@@ -172,7 +172,7 @@ def main(argv):
     data['train']['labels'] = data['train']['labels'][dev_size:]
   else:
     data['dev'] = data['test']
-  tf.logging.info("dev labels" + str(data['dev']['labels'][:1000]) + '\n' * 5)
+  tf.compat.v1.logging.info("dev labels" + str(data['dev']['labels'][:1000]) + '\n' * 5)
   if not FLAGS.full_train_data:
     if FLAGS.task_name == 'svhn':
       assert data['train']['images'].shape[0] == 73257 - 4000
