@@ -121,7 +121,7 @@ class TpuBatchNormalization(tf.keras.layers.BatchNormalization):
       return tf.tpu.cross_replica_sum(t, group_assignment) / tf.cast(
           num_shards_per_group, t.dtype)
     else:
-      tf.logging.info('TpuBatchNormalization None')
+      tf.compat.v1.logging.info('TpuBatchNormalization None')
       return tf.tpu.cross_replica_sum(t, group_assignment) / tf.cast(
           num_shards, t.dtype)
 

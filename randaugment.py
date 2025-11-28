@@ -57,14 +57,14 @@ def blend(image1, image2, factor):
   if factor == 1.0:
     return tf.convert_to_tensor(image2)
 
-  image1 = tf.to_float(image1)
-  image2 = tf.to_float(image2)
+  image1 = tf.cast(image1, tf.float32)
+  image2 = tf.cast(image2, tf.float32)
 
   difference = image2 - image1
   scaled = factor * difference
 
   # Do addition in float.
-  temp = tf.to_float(image1) + scaled
+  temp = tf.cast(image1, tf.float32) + scaled
 
   # Interpolate
   if factor > 0.0 and factor < 1.0:
@@ -100,11 +100,11 @@ def cutout(image, pad_size, replace=0):
   image_width = tf.shape(image)[1]
 
   # Sample the center location in the image where the zero mask will be applied.
-  cutout_center_height = tf.random_uniform(
+  cutout_center_height = tf.random.uniform(
       shape=[], minval=0, maxval=image_height,
       dtype=tf.int32)
 
-  cutout_center_width = tf.random_uniform(
+  cutout_center_width = tf.random.uniform(
       shape=[], minval=0, maxval=image_width,
       dtype=tf.int32)
 
@@ -255,14 +255,14 @@ def autocontrast(image):
     # A possibly cheaper version can be done using cumsum/unique_with_counts
     # over the histogram values, rather than iterating over the entire image.
     # to compute mins and maxes.
-    lo = tf.to_float(tf.reduce_min(image))
-    hi = tf.to_float(tf.reduce_max(image))
+    lo = tf.cast(tf.reduce_min(image), tf.float32)
+    hi = tf.cast(tf.reduce_max(image), tf.float32)
 
     # Scale the image, making the lowest value 0 and the highest value 255.
     def scale_values(im):
       scale = 255.0 / (hi - lo)
       offset = -lo * scale
-      im = tf.to_float(im) * scale + offset
+      im = tf.cast(im, tf.float32) * scale + offset
       im = tf.clip_by_value(im, 0.0, 255.0)
       return tf.cast(im, tf.uint8)
 

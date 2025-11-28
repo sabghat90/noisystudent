@@ -106,7 +106,7 @@ def get_input_fn(params, raw_data=False):
   else:
     filename = utils.get_filename(FLAGS.label_data_dir, FLAGS.file_prefix,
                                   shard_id, FLAGS.num_shards)
-    tf.logging.info('processing files: {}'.format(str(filename)))
+    tf.compat.v1.logging.info('processing files: {}'.format(str(filename)))
     dst = utils.get_dst_from_filename(filename, FLAGS.data_type,
                                       FLAGS.total_replicas, FLAGS.worker_id)
 
@@ -143,10 +143,10 @@ def predict_on_dataset(estimator, worker_image_num):
     ]
     if i % 100 == 0:
       elp_time = (time.time() - start_time) / 3600
-      tf.logging.info(
+      tf.compat.v1.logging.info(
           'prediction finished sample {:d}, expected sample number {:d}'.format(
               i, worker_image_num))
-      tf.logging.info(
+      tf.compat.v1.logging.info(
           'elpased time: {:.2f} h, remaining time: {:.2f} h'.format(
               elp_time, elp_time / (i + 1) * (worker_image_num - i - 1)))
     cnt += 1
@@ -165,24 +165,24 @@ def get_num_image():
     with tf.io.gfile.GFile(info_file) as inf:
       info = json.load(inf)
     worker_image_num = info['image_num']
-    tf.logging.info('\n\n\nloaded worker image num')
+    tf.compat.v1.logging.info('\n\n\nloaded worker image num')
   else:
-    tf.logging.info(
+    tf.compat.v1.logging.info(
         '\n\n\ngetting worker image num since %s does not exist', info_file)
     dst = get_input_fn({'batch_size': 1}, raw_data=True)
     worker_image_num = 0
-    tf.gfile.MakeDirs(FLAGS.info_dir)
+    tf.io.gfile.makedirs(FLAGS.info_dir)
     for _ in utils.iterate_through_dataset(dst):
       worker_image_num += 1
       if worker_image_num % 100 == 0:
-        tf.logging.info('image num %d', worker_image_num)
+        tf.compat.v1.logging.info('image num %d', worker_image_num)
     if not FLAGS.reassign_label:
       with tf.io.gfile.GFile(info_file, 'w') as ouf:
         info = {
             'image_num': worker_image_num,
         }
         json.dump(info, ouf)
-  tf.logging.info('worker image num: %d', worker_image_num)
+  tf.compat.v1.logging.info('worker image num: %d', worker_image_num)
   return worker_image_num
 
 
@@ -195,10 +195,10 @@ def run_prediction(estimator):
     worker_image_num = get_num_image()
     cnt, predict_result_list = predict_on_dataset(
         estimator, worker_image_num)
-    tf.logging.info('predicted on %d images', cnt)
+    tf.compat.v1.logging.info('predicted on %d images', cnt)
     assert cnt == worker_image_num, (cnt, worker_image_num)
 
-    tf.gfile.MakeDirs(FLAGS.output_dir)
+    tf.io.gfile.makedirs(FLAGS.output_dir)
     if FLAGS.reassign_label:
       sample_dir = os.path.join(FLAGS.output_dir, 'samples')
       uid_list = utils.get_uid_list()
@@ -210,7 +210,7 @@ def run_prediction(estimator):
       decoded_image = utils.decode_raw_image(image_bytes_placeholder)
 
       raw_dst = get_input_fn({'batch_size': 1}, raw_data=True)
-      raw_iter = raw_dst.make_initializable_iterator()
+      raw_iter = tf.compat.v1.data.make_initializable_iterator(raw_dst)
       raw_elem = raw_iter.get_next()
 
       filename = utils.get_reassign_filename(
@@ -238,7 +238,7 @@ def run_prediction(estimator):
             filename = os.path.join(
                 sample_dir, uid, 'image_{:d}_{:d}_{:.2f}.jpeg'.format(
                     shard_id, i, prob))
-            tf.logging.info('saving {:s}'.format(filename))
+            tf.compat.v1.logging.info('saving {:s}'.format(filename))
             image = sess.run(
                 decoded_image,
                 feed_dict={image_bytes_placeholder: encoded_image}
