@@ -24,11 +24,12 @@ import collections
 import functools
 import os
 import tensorflow as tf
+from absl import flags
 
 import preprocessing
 import efficientnet_builder
 
-FLAGS = tf.app.flags.FLAGS
+FLAGS = flags.FLAGS
 
 
 class TFExampleInput(object):

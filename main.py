@@ -26,7 +26,34 @@ import functools
 from absl import app
 from absl import flags
 import numpy as np
+import os
+import sys
+
+# Configure TensorFlow before importing
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
 import tensorflow as tf
+
+print(f"TensorFlow version: {tf.__version__}", file=sys.stderr)
+print("Running in GPU/CPU mode (TPU Estimator not required)", file=sys.stderr)
+
+# For compatibility, create a minimal tf1 namespace
+# This allows the rest of the code to work with tf1.* calls
+tf1 = tf.compat.v1
+
+# For estimator-specific code, we'll use a dummy that will be bypassed
+class DummyEstimator:
+    class ModeKeys:
+        TRAIN = 'train'
+        EVAL = 'eval'
+        PREDICT = 'predict'
+
+# Add dummy estimator to tf1 if it doesn't exist
+if not hasattr(tf1, 'estimator'):
+    tf1.estimator = type('obj', (object,), {
+        'ModeKeys': DummyEstimator.ModeKeys,
+        'tpu': None  # Will handle TPU calls separately
+    })
 
 import efficientnet_builder
 import data_input
@@ -34,7 +61,6 @@ import utils
 import task_info
 import predict_label
 from tensorflow.core.protobuf import rewriter_config_pb2
-from tensorflow.python.estimator import estimator
 
 
 FLAGS = flags.FLAGS
@@ -327,7 +353,7 @@ def model_fn(features, mode, params):
       assert not FLAGS.transpose_input    # channels_first only for GPU
       image = tf.transpose(image, [0, 3, 1, 2])
 
-    if FLAGS.transpose_input and mode == tf.estimator.ModeKeys.TRAIN:
+    if FLAGS.transpose_input and mode == tf1.estimator.ModeKeys.TRAIN:
       image = tf.transpose(image, [3, 0, 1, 2])  # HWCN to NHWC
     return image
 
@@ -347,9 +373,9 @@ def model_fn(features, mode, params):
 
   image_shape = image.get_shape().as_list()
   tf.compat.v1.logging.info('image shape: {}'.format(image_shape))
-  is_training = (mode == tf.estimator.ModeKeys.TRAIN)
+  is_training = (mode == tf1.estimator.ModeKeys.TRAIN)
 
-  if mode != tf.estimator.ModeKeys.PREDICT:
+  if mode != tf1.estimator.ModeKeys.PREDICT:
     labels = features['label']
   else:
     labels = None
@@ -448,7 +474,7 @@ def model_fn(features, mode, params):
       teacher_one_hot_pred = tf.argmax(
           teacher_logits, axis=1, output_type=labels.dtype)
 
-  if mode == tf.estimator.ModeKeys.PREDICT:
+  if mode == tf1.estimator.ModeKeys.PREDICT:
     if has_moving_average_decay:
       ema = tf.train.ExponentialMovingAverage(
           decay=FLAGS.moving_average_decay)
@@ -461,12 +487,16 @@ def model_fn(features, mode, params):
         'classes': tf.argmax(logits, axis=1),
         'probabilities': tf.nn.softmax(logits, name='softmax_tensor')
     }
-    return tf.estimator.tpu.TPUEstimatorSpec(
+    
+    # Use standard EstimatorSpec instead of TPUEstimatorSpec
+    scaffold = None
+    if has_moving_average_decay:
+        scaffold = _scaffold_fn(restore_vars_dict=restore_vars_dict)
+    
+    return tf1.estimator.EstimatorSpec(
         mode=mode,
         predictions=predictions,
-        scaffold_fn=functools.partial(
-            _scaffold_fn,
-            restore_vars_dict=restore_vars_dict) if has_moving_average_decay else None
+        scaffold=scaffold
     )
 
   if has_moving_average_decay:
@@ -619,7 +649,7 @@ def model_fn(features, mode, params):
       restore_vars_dict = ema.variables_to_restore(ema_vars)
 
   eval_metrics = None
-  if mode == tf.estimator.ModeKeys.EVAL:
+  if mode == tf1.estimator.ModeKeys.EVAL:
     scaffold_fn = functools.partial(
         _scaffold_fn,
         restore_vars_dict=restore_vars_dict) if has_moving_average_decay else None
@@ -660,13 +690,25 @@ def model_fn(features, mode, params):
   num_params = np.sum([np.prod(v.shape) for v in tf.compat.v1.trainable_variables()])
   tf.compat.v1.logging.info('number of trainable parameters: {}'.format(num_params))
 
-  return tf.estimator.tpu.TPUEstimatorSpec(
+  # Convert TPU-specific eval_metrics to standard evaluation_hooks
+  evaluation_hooks = None
+  if mode == tf1.estimator.ModeKeys.EVAL and eval_metrics:
+      # For standard Estimator, we need to use eval_metric_ops instead
+      metric_fn, tensors = eval_metrics
+      eval_metric_ops = metric_fn(*tensors)
+  else:
+      eval_metric_ops = None
+  
+  # Build scaffold from scaffold_fn if provided
+  scaffold = scaffold_fn() if scaffold_fn else None
+  
+  # Use standard EstimatorSpec instead of TPUEstimatorSpec
+  return tf1.estimator.EstimatorSpec(
       mode=mode,
       loss=loss,
       train_op=train_op,
-      host_call=host_call,
-      eval_metrics=eval_metrics,
-      scaffold_fn=scaffold_fn)
+      eval_metric_ops=eval_metric_ops,
+      scaffold=scaffold)
 
 
 def get_ent(logits):
@@ -717,40 +759,29 @@ def main(unused_argv):
     tpu_cluster_resolver = None
 
   if FLAGS.use_tpu:
-    tpu_config = tf.estimator.tpu.TPUConfig(
-        iterations_per_loop=FLAGS.iterations_per_loop,
-        num_shards=FLAGS.num_tpu_cores,
-        per_host_input_for_training=tf.estimator.tpu.InputPipelineConfig
-        .PER_HOST_V2)
+    # TPU configuration - not supported in this version
+    raise ValueError("TPU training is not supported. Please use --use_tpu=False for GPU/CPU training.")
   else:
-    tpu_config = tf.estimator.tpu.TPUConfig(
-        iterations_per_loop=FLAGS.iterations_per_loop,
-        num_shards=FLAGS.num_tpu_cores,
-        per_host_input_for_training=tf.estimator.tpu.InputPipelineConfig
-        .PER_HOST_V2)
-  config = tf.estimator.tpu.RunConfig(
-      cluster=tpu_cluster_resolver,
-      master=FLAGS.master,
-      model_dir=FLAGS.model_dir,
-      save_checkpoints_steps=max(FLAGS.save_checkpoints_steps, FLAGS.iterations_per_loop),
-      log_step_count_steps=FLAGS.log_step_count_steps,
-      keep_checkpoint_max=FLAGS.keep_checkpoint_max,
-      session_config=tf.ConfigProto(
-          graph_options=tf.GraphOptions(
-              rewrite_options=rewriter_config_pb2.RewriterConfig(
-                  disable_meta_optimizer=True))),
-      tpu_config=tpu_config)  # pylint: disable=line-too-long
+    # GPU/CPU configuration using standard RunConfig
+    session_config = tf1.ConfigProto()
+    session_config.gpu_options.allow_growth = True
+    
+    config = tf1.estimator.RunConfig(
+        model_dir=FLAGS.model_dir,
+        save_checkpoints_steps=max(FLAGS.save_checkpoints_steps, FLAGS.iterations_per_loop),
+        log_step_count_steps=FLAGS.log_step_count_steps,
+        keep_checkpoint_max=FLAGS.keep_checkpoint_max,
+        session_config=session_config)
+  
   # Initializes model parameters.
   params = dict(
       steps_per_epoch=steps_per_epoch,
-      use_bfloat16=FLAGS.use_bfloat16)
-  est = tf.estimator.tpu.TPUEstimator(
-      use_tpu=FLAGS.use_tpu,
+      use_bfloat16=False)  # bfloat16 is TPU-specific, use float32 for GPU
+  
+  # Use standard Estimator instead of TPUEstimator
+  est = tf1.estimator.Estimator(
       model_fn=model_fn,
       config=config,
-      train_batch_size=FLAGS.train_batch_size,
-      eval_batch_size=FLAGS.eval_batch_size,
-      predict_batch_size=8,
       params=params)
 
   # Input pipelines are slightly different (with regards to shuffling and
@@ -766,10 +797,11 @@ def main(unused_argv):
       transpose_input=FLAGS.transpose_input,
       cache=FLAGS.use_cache,
       image_size=input_image_size,
-      use_bfloat16=FLAGS.use_bfloat16)
+      use_bfloat16=False)  # Use float32 for GPU training
   if FLAGS.mode == 'train' or FLAGS.mode == 'train_and_eval':
-    current_step = estimator._load_global_step_from_checkpoint_dir(
-        FLAGS.model_dir)  # pylint: disable=protected-access,line-too-long
+    current_step = tf.compat.v1.train.load_variable(
+        FLAGS.model_dir, tf.compat.v1.GraphKeys.GLOBAL_STEP) if tf.io.gfile.exists(
+            os.path.join(FLAGS.model_dir, 'checkpoint')) else 0
 
     tf.compat.v1.logging.info(
         'Training for %d steps (%.2f epochs in total). Current'
@@ -780,21 +812,34 @@ def main(unused_argv):
     start_timestamp = time.time()  # This time will include compilation time
 
     if FLAGS.mode == 'train':
+      # Create wrapper to pass batch_size to input_fn
+      def train_input_fn():
+        return train_data.input_fn({'batch_size': FLAGS.train_batch_size})
+      
       est.train(
-          input_fn=train_data.input_fn,
+          input_fn=train_input_fn,
           max_steps=FLAGS.train_last_step_num,
           hooks=[])
   elif FLAGS.mode == 'eval':
     input_fn_mapping = {}
     for subset in ['dev', 'test']:
-      input_fn_mapping[subset] = data_input.DataInput(
+      data_input_obj = data_input.DataInput(
           is_training=False,
           data_dir=FLAGS.label_data_dir,
           transpose_input=FLAGS.transpose_input,
           cache=False,
           image_size=input_image_size,
-          use_bfloat16=FLAGS.use_bfloat16,
-          subset=subset).input_fn
+          use_bfloat16=False,  # Use float32 for GPU
+          subset=subset)
+      
+      # Create wrapper to pass batch_size to input_fn
+      def make_eval_input_fn(data_obj):
+        def eval_input_fn():
+          return data_obj.input_fn({'batch_size': FLAGS.eval_batch_size})
+        return eval_input_fn
+      
+      input_fn_mapping[subset] = make_eval_input_fn(data_input_obj)
+      
       if subset == 'dev':
         num_images = FLAGS.num_eval_images
       else:
